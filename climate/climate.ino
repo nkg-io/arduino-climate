@@ -29,6 +29,8 @@ MCP_CAN CAN0(10);                               // Set CS to pin 10
 #define YELLOW_PIN 6
 // send air to screen and floor (demist?)
 
+#define SERIESRESISTOR 10000
+// the resistors in series with the thermistors to determine the actual resistance of the thermistors
 
 
 // Define variables
@@ -92,7 +94,7 @@ void setup() {
   pinMode(BROWN_PIN, OUTPUT);
   pinMode(YELLOW_PIN, OUTPUT);
 
-  // only want to recieve messages from ICC climate buttons (0x307) and PCM (0x)
+  // only want to receive messages from ICC climate buttons (0x307) and PCM (0x)
   CAN0.init_Mask(0,0,0x07FF0000);                // Init first mask... - compares the entire ID.
   CAN0.init_Filt(0,0,0x03070000);                // Init first filter...
   CAN0.init_Filt(1,0,0x03130000);                // Init second filter, same as first as that is how the MCP works. might use this for ICC internal temp too.
@@ -231,8 +233,15 @@ void loop() {
 
   // Retrieve information from sensors
   evapRaw = analogRead(EVAP_PIN);
+  // now need to convert the input value into a resistance
+  evapRaw = 1023 / evapRaw - 1;
+  evapRaw = SERIESRESISTOR / evapRaw;
   evapTemp = tempCalc(evapRaw, 0);
+
   ambientRaw = analogRead(AMBIENT_PIN);
+  // now need to convert to resistance to pass
+  ambientRaw = 1023 / ambientRaw - 1;
+  ambientRaw = SERIESRESISTOR / ambientRaw;
   ambientTemp = tempCalc(ambientRaw, 1);
   
   // Manual/"semi auto" climate control blend door control
@@ -274,7 +283,11 @@ void loop() {
   if(millis() - prevTX >= txInt){                    // currently sending at 50ms interval defined by txInt
   prevTX = millis();
   byte data[8];
-  byte sndStat = CAN0.sendMsgBuf(0x100, 8, data);
+  // each byte stores an 8 bit number from 0-255
+  // byte 6 always contains 129, byte 5 always contains zero, byte 3 always contains 34
+  data[6] = 129;
+  data[5] = 0;
+  data[3] = 34;
 
   // tx selectedTemp
   // tx ambientTemp
@@ -301,9 +314,19 @@ void loop() {
   // tx acOnDisplayIcon
   // tx acOffDisplayIcon
   }
+
+  if (climateMode == 0){
+    data[0] = 0;
+    data[1] = 0;
+    data[2] = 171;
+    data[4] = 0; // data[4] is the temperature setting where data[4] = selectedTemp
+    data[7] = ;
+  }
+
+  byte sndStat = CAN0.sendMsgBuf(canID, 8, data); //send the packet over CAN using the HIM's CANID of 0x353
 }
 
-// Code to convert voltage reading to actual temperature - this is probably cooked AF
+// Code to convert resistance to actual temperature
 float tempCalc(int x_in, int mode) {
   float temp, a, b, c; 
   temp = 0.0;
@@ -313,10 +336,10 @@ float tempCalc(int x_in, int mode) {
     b = -2.6511866112720156E+01; 
     c = -6.5157025827603281E+00;
   }
-  else{ // ambient temp coefficients
-    a = 2.8316638268780913E+01; 
-    b = -2.6511866112720156E+01; 
-    c = -6.5157025827603281E+00;    
+  else{ // ambient temp coefficients; based currently on 20-36c; x is resistance, y is temperature
+    a = 3.8290808431370401E+01; 
+    b = -2.6103766308667307E+01; 
+    c = 5.6745487456546986E+00;    
   }
   temp = a + b*log(x_in) + c*pow(log(x_in), 3.0);
   return temp; 
