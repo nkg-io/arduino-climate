@@ -14,13 +14,22 @@ MCP_CAN CAN0(10);                               // Set CS to pin 10
 // Analogue
 #define EVAP_PIN 0
 #define AMBIENT_PIN 1
+
 // Digital
 #define INLET_PIN 0
+// also known as green pin in notes
 #define WATER_VALVE_PIN 1
+// ground to close valve
 #define BLUE_PIN 3
+// send air to face
 #define RED_PIN 4
+// to air to cold only face, bi level
 #define BROWN_PIN 5
+// send air to floor
 #define YELLOW_PIN 6
+// send air to screen and floor (demist?)
+
+
 
 // Define variables
 float evapTemp; // A/C evaporator core temperature - may need this finer accuracy as is used below a temp to turn on/off.
@@ -246,7 +255,8 @@ void loop() {
 
   // Calculations and changes for automatic climate go here.
   if (climateMode == 1){
-    // TODO: implement a PID algorithm to move motor dependant on everything. will eventually need input from internal car temp etc
+    // TODO: implement a PID algorithm to move motor dependant on everything.
+    cabinActualTemp = (cabinTemp - 100) / 2;
     // Will change blend door (use moveBlendDoor), air inlet (use changeAirInlet), blower speed (as infinitely variable implement locally), air outlet (use changeAirOutlet), acOn status
   }
 
@@ -368,13 +378,14 @@ int changeBlowerMotor(){
 }
 
 int changeWaterValve(){
+  // the water valve is closed when grounded
   if (waterValveMode == FALSE){
     // water valve closed
-    digitalWrite(WATER_VALVE_PIN, LOW);
+    digitalWrite(WATER_VALVE_PIN, HIGH);
   }
   else{
     // water valve open
-    digitalWrite(WATER_VALVE_PIN, HIGH);
+    digitalWrite(WATER_VALVE_PIN, LOW);
   }
   return waterValveMode;
 }
