@@ -26,10 +26,8 @@ MCP_CAN CAN0(10);                               // Set CS to pin 10
 // TODO: Note that when on 'high temp' in fresh; this goes to vacuum and actually recircs
 
 #define WATER_VALVE_PIN 1 
-// turquoise - 
-// TODO: note when on 'full cold' this goes to Vacuum aka solenoid on/high
-// Water valve open when to atmosphere; which is when low
-// ground to close valve (e.g. make high)
+// turquoise
+// Water valve open when to atmosphere; which is when low (waterValveMode = TRUE)
 
 #define BLUE_PIN 3
 // send air to face
@@ -44,10 +42,13 @@ MCP_CAN CAN0(10);                               // Set CS to pin 10
 // send air to floor
 
 #define YELLOW_PIN 6
-// send air to screen and floor?????
+// send air to screen and floor????? - there may be a secondary use to this but cannot find singular use of Brown / Yellow. both used together.
 
 #define SERIESRESISTOR 10000
 // the resistors in series with the thermistors to determine the actual resistance of the thermistors
+
+#define FALSE 0
+#define TRUE 1
 
 
 // Define variables
@@ -65,13 +66,12 @@ unsigned int selectedBlower = 0; // reports back selected blower fan speed in se
 bool airInletMode = TRUE; // Air inlet mode - fresh (1 - true) / recirc(0 - false) 
 unsigned int airOutletMode = 0; // Air outlet mode - face/floor/screen, demist
 bool acOn = TRUE; // this is used only in the program, used to determine if A/C on or not. used to calculate the state of the below 3 A/C booleans.
-
 bool acEngaged = FALSE; // this is because we want to send a message depending on whether AC clutch request is to be sent or not
 //bool acDisplayIcon; // Whether or not to display A/C icon??
 //bool acOnDisplayIcon; // not sure about the A/C icon deal here.. but by default A/C is enabled
 //bool acOffDisplayIcon; // by default A/C off so keep off
-//bool personDisplayIcon = TRUE; // something transmitted apparently, might as well transmit the person??? lol what
-float blowerFanVoltage = 0.0; // Blower fan motor operating speed voltage, used in auto and manual mode
+//bool personDisplayIcon = TRUE; // something transmitted apparently. may actually be used to hide person in auto mode etc?
+float blowerFanVoltage = 0.0; // Blower fan motor operating speed voltage
 
 // Other variables
 unsigned long prevTX = 0; // time elapsed since last transmission of state data
@@ -85,7 +85,7 @@ long unsigned int rxId;
 unsigned char len;
 unsigned char rxBuf[8];
 
-// HIM can prefix is 0x353
+// HIM can prefix is 0x353 // 851 dec
 #define canID 0x353
 
 // CAN Messages
@@ -103,7 +103,6 @@ unsigned char rxBuf[8];
 
 void setup() {
   // Initialize MCP2515 running at 8MHz with a baudrate of 500kb/s
-  // TODO: add masks and filters to only recieve specific PCM data.
   CAN0.begin(MCP_STDEXT, CAN_500KBPS, MCP_8MHZ);
   pinMode(CAN0_INT, INPUT);                       // Setting pin for interrupt input
 
@@ -117,7 +116,7 @@ void setup() {
   // only want to receive messages from ICC climate buttons (0x307) and PCM (0x)
   CAN0.init_Mask(0,0,0x07FF0000);                // Init first mask... - compares the entire ID.
   CAN0.init_Filt(0,0,0x03070000);                // Init first filter - ICC buttons
-  CAN0.init_Filt(1,0,0x03130000);                // Init second filter - ICC internal temp too.
+  CAN0.init_Filt(1,0,0x03130000);                // Init second filter - ICC internal temp
   
   CAN0.init_Mask(1,0,0x07FF0000);                // Init second mask... 
   CAN0.init_Filt(2,0,0x03070000);                // Init third filter...
@@ -157,7 +156,7 @@ void loop() {
           
         if (memcmp(rxBuf, ICC_INLET_BUTTON, len) == 0){
           // change the intake mode variable then change the solenoids to suit, open fresh ground recirc
-          if (climateMode == 1){climateMode = 2}; //if full auto change to semi auto as we can have recirc etc on Off
+          if (climateMode == 1){climateMode = 2;}; //if full auto change to semi auto as we can have recirc etc on Off
 
           // apparently if we are in off mode; but have fan on the system will switch to Semi auto mode.
           if (climateMode == 0 && selectedBlower != 0){climateMode = 2;}
@@ -281,8 +280,8 @@ void loop() {
         // ICC Internal temperature input; recieved every 250ms
         cabinTemp = rxBuf[0]; // therefore to calculate a temperature times by two and add 100; therefore 22c = 144, 21.5 = 143; to get real temp cabinActualTemp = (cabinTemp - 100) / 2;
         break;
-      }
-    }
+    };
+  }
 
   // Retrieve information from sensors
   evapRaw = analogRead(EVAP_PIN);
@@ -324,13 +323,13 @@ void loop() {
           changeWaterValve();
           moveBlendDoor(255);
           break;
-    } 
+    }; 
   }
 
   // Calculations and changes for automatic climate go here.
   if (climateMode == 1){
     // TODO: implement a PID algorithm to move motor dependant on everything.
-    cabinActualTemp = (cabinTemp - 100) / 2;
+    //cabinActualTemp = (cabinTemp - 100) / 2;
     if (selectedTemp == 35){airInletMode = FALSE; changeAirInlet();} // maximum cold = recirc
     // Will change blend door (use moveBlendDoor), air inlet (use changeAirInlet), blower speed (as infinitely variable implement locally), air outlet (use changeAirOutlet), acOn status
   }
@@ -360,7 +359,7 @@ void loop() {
     //data[0] is fan speed; from 0 to 10 in decimal where 0 is off; 10 is max?; exception is when in full auto mode with fan speed set? add 144 to fan speed
     data[1] = blowerFanVoltage;
     //data[2] is unknown
-    data[4] = selectedTemp
+    data[4] = selectedTemp;
 
     // tx ambientTemp & evapTemp is unknown; probably data[2]?
 
