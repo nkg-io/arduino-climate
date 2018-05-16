@@ -1,5 +1,5 @@
 // AU<->FG Falcon climate control software
-// Version 0.6.2 - 24/4/18
+// Version 0.6.3 - 16/5/18
 
 #include <mcp_can.h>
 #include <SPI.h>
@@ -19,13 +19,13 @@ MCP_CAN CAN0(10);                               // Set CS to pin 10
 
 // When the solenoids are off; the specific thing is set to Atmosphere and does not get vacuum.
 
-#define INLET_PIN 0 
+#define INLET_PIN 0
 // also known as green pin
 // Fresh is to atmosphere (low)
 // Recirc is to vacuum (high)
 // TODO: Note that when on 'high temp' in fresh; this goes to vacuum and actually recircs
 
-#define WATER_VALVE_PIN 1 
+#define WATER_VALVE_PIN 1
 // turquoise
 // Water valve open when to atmosphere; which is when low (waterValveMode = TRUE)
 
@@ -33,16 +33,19 @@ MCP_CAN CAN0(10);                               // Set CS to pin 10
 // send air to face
 // To vacuum (high) when set to face
 
-#define RED_PIN 4 
+#define RED_PIN 4
 // to air to cold only face, bi level
 // To vacuum only when face and floor mode is on and 'full cold' is set
 
-#define BROWN_PIN 5 
+#define BROWN_PIN 7
 // aka TAN
 // send air to floor
 
-#define YELLOW_PIN 6
+#define YELLOW_PIN 8
 // send air to screen and floor????? - there may be a secondary use to this but cannot find singular use of Brown / Yellow. both used together.
+
+#define FSC_PIN 9
+// pin that connects to the fan speed controller transistor
 
 #define SERIESRESISTOR 10000
 // the resistors in series with the thermistors to determine the actual resistance of the thermistors
