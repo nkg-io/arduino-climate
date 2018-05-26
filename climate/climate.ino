@@ -1,5 +1,5 @@
 // AU<->FG Falcon climate control software
-// Version 0.6.4 - 26/5/18
+// Version 0.7 - 26/5/18
 
 #include <mcp_can.h>
 #include <SPI.h>
