@@ -1,5 +1,5 @@
 // AU<->FG Falcon climate control software
-// Version 0.6.3 - 16/5/18
+// Version 0.6.4 - 26/5/18
 
 #include <mcp_can.h>
 #include <SPI.h>
@@ -115,6 +115,8 @@ void setup() {
   pinMode(RED_PIN, OUTPUT);
   pinMode(BROWN_PIN, OUTPUT);
   pinMode(YELLOW_PIN, OUTPUT);
+
+  pinMode(FSC_PIN, OUTPUT);
 
   // only want to receive messages from ICC climate buttons (0x307) and PCM (0x)
   CAN0.init_Mask(0,0,0x07FF0000);                // Init first mask... - compares the entire ID.
@@ -354,19 +356,26 @@ void loop() {
     // these bytes may all be backwards; as I am taking the byte 7 as the largest e.g. 10000000
 
     // each byte stores an 8 bit number from 0-255
-    // byte 6 always contains 129, byte 5 always contains zero, byte 3 always contains 34
+    // byte 6 always contains 129
     data[6] = 129;
+    // byte 5 always contains zero, as it is the passenger temp
     data[5] = 0;
-    data[3] = 34;
-
-    //data[0] is fan speed; from 0 to 10 in decimal where 0 is off; 10 is max?; exception is when in full auto mode with fan speed set? add 144 to fan speed
-    data[1] = blowerFanVoltage;
-    //data[2] is unknown
     data[4] = selectedTemp;
 
-    // tx ambientTemp & evapTemp is unknown; probably data[2]?
+    //TODO: these need to be correctly sent; it is possible these contain some modification to represent a different number e.g. (temp-100)/2 or something
+    // byte 3 is the ambient temp;
+    data[3] = ambientTemp;
 
+    // byte 2 is AC evaporator temp - warning this is a Float; an example here is 171 = 35.5c which is going to be wrong
+    data[2] = evapTemp;
 
+    
+    data[1] = blowerFanVoltage;
+
+    //data[0] is fan speed; from 0 to 10 in decimal where 0 is off; 10 is max?; exception is when in full auto mode with fan speed set? add 144 to fan speed
+    if (climateMode==1){data[0] = selectedBlower + 144;}
+    else{data[0] = selectedBlower;}
+    
     /* AC related booleans to transmit:
     and other odd booleans: personDisplayIcon
     // may need to only actually turn on the icons when e.g a/c turned off acOffDisplayIcon would be one, but if system off (climateMode == 0), then don't need to
@@ -507,13 +516,49 @@ int changeAirInlet(){
   return airInletMode;
 }
 
-// TODO: Complete this function
+// TODO: Complete this function; mostly is complete
 void changeBlowerMotor(){
-  // Input effectively is global variable selectedBlower; this code only used for the semi auto mode.
-
-  // Change the output of whatever pin is controlling fan speed controller to change to the requested fan speed.
-  // Also set blowerFanVoltage to respective level.
-  //return 0;
+  // Input is global variable selectedBlower; this code only used for the semi auto mode.
+  switch(selectedBlower){
+    case 0:
+      analogWrite(FSC_PIN, 12);
+      break;
+    case 1:
+      analogWrite(FSC_PIN, 49);
+      break;
+    case 2:
+      analogWrite(FSC_PIN, 64);
+      break;
+    case 3:
+      analogWrite(FSC_PIN, 81);
+      break;
+    case 4:
+      analogWrite(FSC_PIN, 92);
+      break;
+    case 5:
+      analogWrite(FSC_PIN, 107);
+      break;
+    case 6:
+      analogWrite(FSC_PIN, 123);
+      break;
+    case 7:
+      analogWrite(FSC_PIN, 142);
+      break;
+    case 8:
+      analogWrite(FSC_PIN, 159);
+      break;
+    case 9:
+      analogWrite(FSC_PIN, 195);
+      break;
+    case 10:
+      // Techincally this should actually be -1v. might work on zero volts too who knows.
+      analogWrite(FSC_PIN, 0);
+      break;
+    default:
+      analogWrite(FSC_PIN, 0);
+      break;
+  }
+  // TODO: Also set blowerFanVoltage is actually reported from the output of the FSC to a different pin
 }
 
 int changeWaterValve(){

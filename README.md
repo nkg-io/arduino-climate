@@ -7,8 +7,9 @@ Originally designed for use in the Australian Ford Falcon (AU), as I had perform
 ## Features (when complete)
 - Send and receive CANBus packets and make decisions based upon these
 - Stores items required on start up to Arduino EEPROM
-- Control vacuum solenoids, fan speed controller and blend door servo / stepper motor.
+- Control vacuum solenoids, fan speed controller and blend door motor (with potentiometer based positioning).
 - Receive inputs from thermistors and send this information via CAN bus
+- Receive voltage level from fan speed controller and send via CAN bus
 
 ## Required software and hardware
 - Arduino Nano
