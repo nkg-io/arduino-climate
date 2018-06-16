@@ -6,46 +6,66 @@
 #include <EEPROM.h>
 
 // CAN0 INT and CS definitions.
-#define CAN0_INT 2                              // Set INT to pin 2 - interrupt from can chip
-MCP_CAN CAN0(10);                               // Set CS to pin 10
-// pins 11-13 also used by the MCP
+#define CAN0_INT 49                              // Set INT to pin 49 - interrupt from can chip
+MCP_CAN CAN0(53);                               // Set CS to pin 53 (pin 10 for arduino uno)
+// pins 50-52 (mega) / 11-13 (uno) also used by the MCP
 
 // Define pin states
 // Analogue
-#define EVAP_PIN 0
-#define AMBIENT_PIN 1
+#define EVAP_PIN A0 // voltage divider for evaporator thermistor
+#define AMBIENT_PIN A1 // voltage divider for ambient temperature thermistor
+#define MOTORLOC_PIN A2 // potentiometer input from blend door motor
 
 // Digital
 
 // When the solenoids are off; the specific thing is set to Atmosphere and does not get vacuum.
 
-#define INLET_PIN 0
+#define INLET_PIN 48
 // also known as green pin
 // Fresh is to atmosphere (low)
 // Recirc is to vacuum (high)
 // TODO: Note that when on 'high temp' in fresh; this goes to vacuum and actually recircs
 
-#define WATER_VALVE_PIN 1
+#define WATER_VALVE_PIN 47
 // turquoise
 // Water valve open when to atmosphere; which is when low (waterValveMode = TRUE)
 
-#define BLUE_PIN 3
+#define BLUE_PIN 46
 // send air to face
 // To vacuum (high) when set to face
 
-#define RED_PIN 4
+#define RED_PIN 45
 // to air to cold only face, bi level
 // To vacuum only when face and floor mode is on and 'full cold' is set
 
-#define BROWN_PIN 7
+#define BROWN_PIN 44
 // aka TAN
 // send air to floor
 
-#define YELLOW_PIN 8
+#define YELLOW_PIN 43
 // send air to screen and floor????? - there may be a secondary use to this but cannot find singular use of Brown / Yellow. both used together.
 
-#define FSC_PIN 9
+//#define FSC_PIN 2
 // pin that connects to the fan speed controller transistor
+// needs to be PWM
+
+#define L298N_FSC_DIR1 42
+// 
+
+#define L298N_FSC_DIR2 41
+// 
+
+#define L298N_FSC_SPEED 2
+// PWM control of the l298n
+
+#define L298N_BLEND_DIR1 40
+// 
+
+#define L298N_BLEND_DIR2 39
+// 
+
+#define L298N_BLEND_SPEED 3
+// PWM control of the l298n
 
 #define SERIESRESISTOR 10000
 // the resistors in series with the thermistors to determine the actual resistance of the thermistors
@@ -116,7 +136,14 @@ void setup() {
   pinMode(BROWN_PIN, OUTPUT);
   pinMode(YELLOW_PIN, OUTPUT);
 
-  pinMode(FSC_PIN, OUTPUT);
+  //pinMode(FSC_PIN, OUTPUT);
+  // Set up L298N pins all as output.
+  pinMode(L298N_FSC_DIR1, OUTPUT);
+  pinMode(L298N_FSC_DIR2, OUTPUT);
+  pinMode(L298N_FSC_SPEED, OUTPUT);
+  pinMode(L298N_BLEND_DIR1, OUTPUT);
+  pinMode(L298N_BLEND_DIR2, OUTPUT);
+  pinMode(L298N_BLEND_SPEED, OUTPUT);
 
   // only want to receive messages from ICC climate buttons (0x307) and PCM (0x)
   CAN0.init_Mask(0,0,0x07FF0000);                // Init first mask... - compares the entire ID.
@@ -152,10 +179,9 @@ void loop() {
         if (memcmp(rxBuf, ICC_FRONT_DEMIST, len) == 0){
           // Demist
           climateMode = 2; // semi automatic
-          airOutletMode = 4; // screen only (demist)
           // A/C is enabled when demist on
           acOn = TRUE;
-          changeAirOutlet();
+          changeAirOutlet(4); // screen only (demist)
           break;
         }
           
@@ -175,8 +201,9 @@ void loop() {
             if (airOutletMode == 4){airOutletMode = 0;}
           }
 
-          airInletMode = !airInletMode; // we aren't changing to a specific mode, rather just changing to opposite
-          changeAirInlet();
+          // Actually change the air inlet to the opposite
+          if (airInletMode == FALSE){changeAirInlet(TRUE);}
+          else {changeAirInlet(FALSE);}
           break;
         }
           
@@ -185,7 +212,7 @@ void loop() {
           if (climateMode == 0){climateMode = 1;}
           else {
             climateMode = 2; // semi automatic, as automatic automatically selects A/C on and off
-            if (airInletMode == FALSE){airInletMode = TRUE; changeAirInlet();} // can not have recirc and A/C off apparently
+            if (airInletMode == FALSE){changeAirInlet(TRUE);} // can not have recirc and A/C off apparently
             acOn = !acOn; //invert boolean
           }
           break;
@@ -196,15 +223,12 @@ void loop() {
           // if off; ensure in fresh air mode and do nothing
           // this decreases selectedBlower by 1 if applicable
           // if auto, change to semi auto and dec etc
-
-          // only question is if you hit FAN DEC when at L; does it go off?
           if (climateMode == 1){climateMode = 2;}
           if (climateMode == 0 && airInletMode == FALSE){
-            airInletMode = TRUE; 
-            changeAirInlet();
+            changeAirInlet(TRUE);
             break;
           }
-          if (selectedBlower == 0){break;} // if the blower is already off do nothing and ignore rest
+          if (selectedBlower == 0 || selectedBlower == 1){break;} // if the blower is already off do nothing and ignore rest. does not turn off blower if at 1 either.
           else {
             selectedBlower--;
             changeBlowerMotor();
@@ -216,8 +240,7 @@ void loop() {
           // unless at 10 (max), increase selectedBlower by 1
           if (climateMode == 1){climateMode = 2;}
           if (climateMode == 0 && airInletMode == FALSE){
-            airInletMode = TRUE; 
-            changeAirInlet();
+            changeAirInlet(TRUE);
             break;
           }
           if (selectedBlower == 10){break;}
@@ -229,11 +252,9 @@ void loop() {
         }
 
         if (memcmp(rxBuf, ICC_OFF_BUTTON, len) == 0){
-          climateMode = 0;
-          airInletMode = TRUE; // set inlet variable to fresh
-          airOutletMode = 0; // default is face 
-          changeAirOutlet();
-          changeAirInlet(); // actually change solenoids
+          climateMode = 0; 
+          changeAirOutlet(0); // default is face 
+          changeAirInlet(TRUE); // set inlet variable to fresh
           selectedBlower = 0;
           acOn = TRUE; // allow a/c again? TODO: we don't actaully want A/C clutch running though
           acEngaged = FALSE; // this will ensure the A/C clutch is turned off
@@ -242,10 +263,9 @@ void loop() {
 
         if (memcmp(rxBuf, ICC_AUTO_BUTTON, len) == 0){
           climateMode = 1;
-          airInletMode = TRUE; // auto runs fresh unless max cooling
           acOn = TRUE; // allow A/C
           selectedTemp = 44; // 22c is default
-          changeAirInlet();
+          changeAirInlet(TRUE); // auto runs fresh unless max cooling
           break; // no need to process any more ifs 
         }
 
@@ -254,16 +274,14 @@ void loop() {
           // change to semi automatic if pressed
           climateMode = 2;
           // Cycle through outlet modes
-          if (airOutletMode != 3){
-            airOutletMode++;
+          if (airOutletMode <3 && airOutletMode >=0){
+            changeAirOutlet(++airOutletMode);
           }
           else {
             // go to zero
-            airOutletMode = 0;
+            changeAirOutlet(0);
           }
-          // Now change solenoids etc.
-          changeAirOutlet();
-          break; // no need to process any more ifs 
+          break;
         }
 
         // Temperature changes are captured later each loop for both semi and full auto.
@@ -306,36 +324,25 @@ void loop() {
   // inlet controls & blower are is done in the CAN input part
   if (climateMode == 2){
     // move door dependant on selectedTemp. 
-    // TODO: enable / disable water tap depending on whether we are heating or cooling. this is determined if (cabinTemp-100) is greater or less than selectedTemp
-    // if airOutletMode == 4; set fan to 3 (recommended in the manual)
-
+    // TODO: if airOutletMode == 4 (demist); set fan to 3 (recommended in the manual)
     // need to implement acEngaged logic; if (acOn == FALSE) {acEngaged = FALSE;} else if (airOutletMode == 4){acEngaged = TRUE; // demist uses a/c} etc
-      switch (selectedTemp){
-        case 35:
-          // Full cold will always have the water valve closed
-          waterValveMode = FALSE;
-          changeWaterValve();
-          airInletMode = FALSE;
-          changeAirInlet();
-          moveBlendDoor(0);
-          break;
-        case 36:
-          waterValveMode = TRUE;
-          changeWaterValve();
-          break;
-        case 61: // max temp
-          waterValveMode = TRUE;
-          changeWaterValve();
-          moveBlendDoor(255);
-          break;
-    }; 
+
+    // move the blend door to the appropriate position for the selected temperature
+    moveBlendDoor(map(selectedTemp, 35, 61, 0, 255));
+    // Logic for water valve: if cabin temperature is colder than selected temp, open the valve
+    if ((cabinTemp-100) < selectedTemp){changeWaterValve(TRUE);}
+    else {changeWaterValve(FALSE);}
+    // Maximum cold always has the water valve closed and inlet to recirc
+    if (selectedTemp == 35){changeWaterValve(FALSE); changeAirInlet(FALSE);}
+
   }
 
   // Calculations and changes for automatic climate go here.
   if (climateMode == 1){
     // TODO: implement a PID algorithm to move motor dependant on everything.
+    // use map() function to map the fan speed   
     //cabinActualTemp = (cabinTemp - 100) / 2;
-    if (selectedTemp == 35){airInletMode = FALSE; changeAirInlet();} // maximum cold = recirc
+    if (selectedTemp == 35){changeAirInlet(FALSE);} // maximum cold = recirc
     // Will change blend door (use moveBlendDoor), air inlet (use changeAirInlet), blower speed (as infinitely variable implement locally), air outlet (use changeAirOutlet), acOn status
   }
 
@@ -369,7 +376,6 @@ void loop() {
     // byte 2 is AC evaporator temp - warning this is a Float; an example here is 171 = 35.5c which is going to be wrong
     data[2] = evapTemp;
 
-    
     data[1] = blowerFanVoltage;
 
     //data[0] is fan speed; from 0 to 10 in decimal where 0 is off; 10 is max?; exception is when in full auto mode with fan speed set? add 144 to fan speed
@@ -451,14 +457,15 @@ float tempCalc(int x_in, int mode) {
 } 
 
 // TODO: make this function
-int moveBlendDoor(int pos){
+void moveBlendDoor(int pos){
   // take input and move blend door to the position requested.
   // only actually move the door if the position has changed, don't need to burn out the motor moving it like crazy
 
   // cold is when the heater door fully closed
 }
 
-int changeAirOutlet(){
+void changeAirOutlet(int newOutletMode){
+  airOutletMode = newOutletMode;
   switch (airOutletMode){
     case 0:
       // Face only
@@ -501,10 +508,10 @@ int changeAirOutlet(){
       digitalWrite(YELLOW_PIN, LOW);
       break;
   }
-  return airOutletMode;
 }
 
-int changeAirInlet(){
+void changeAirInlet(int newInletMode){
+  airInletMode = newInletMode;
   if (airInletMode == TRUE){
     // Fresh air
     digitalWrite(INLET_PIN, LOW);
@@ -513,55 +520,59 @@ int changeAirInlet(){
     // Recirculate
     digitalWrite(INLET_PIN, HIGH);
   }
-  return airInletMode;
 }
 
-// TODO: Complete this function; mostly is complete
 void changeBlowerMotor(){
   // Input is global variable selectedBlower; this code only used for the semi auto mode.
+  // will need to check the logic of the HIGH and LOW order to ensure the thing is going the correct direction.
+  if (selectedBlower !=10){analogWrite(L298N_FSC_DIR1,LOW); analogWrite(L298N_BLEND_DIR2,HIGH);}
+  else {analogWrite(L298N_FSC_DIR1,HIGH); analogWrite(L298N_BLEND_DIR2,LOW);}
+
   switch(selectedBlower){
     case 0:
-      analogWrite(FSC_PIN, 12);
+      analogWrite(L298N_FSC_SPEED, 12);
       break;
     case 1:
-      analogWrite(FSC_PIN, 49);
+      analogWrite(L298N_FSC_SPEED, 49);
       break;
     case 2:
-      analogWrite(FSC_PIN, 64);
+      analogWrite(L298N_FSC_SPEED, 64);
       break;
     case 3:
-      analogWrite(FSC_PIN, 81);
+      analogWrite(L298N_FSC_SPEED, 81);
       break;
     case 4:
-      analogWrite(FSC_PIN, 92);
+      analogWrite(L298N_FSC_SPEED, 92);
       break;
     case 5:
-      analogWrite(FSC_PIN, 107);
+      analogWrite(L298N_FSC_SPEED, 107);
       break;
     case 6:
-      analogWrite(FSC_PIN, 123);
+      analogWrite(L298N_FSC_SPEED, 123);
       break;
     case 7:
-      analogWrite(FSC_PIN, 142);
+      analogWrite(L298N_FSC_SPEED, 142);
       break;
     case 8:
-      analogWrite(FSC_PIN, 159);
+      analogWrite(L298N_FSC_SPEED, 159);
       break;
     case 9:
-      analogWrite(FSC_PIN, 195);
+      analogWrite(L298N_FSC_SPEED, 195);
       break;
     case 10:
-      // Techincally this should actually be -1v. might work on zero volts too who knows.
-      analogWrite(FSC_PIN, 0);
+      // Techincally this should be outputting approx -1v
+      analogWrite(L298N_FSC_SPEED, 20);
       break;
     default:
-      analogWrite(FSC_PIN, 0);
+      analogWrite(L298N_FSC_SPEED, 12);
+      // sets the default to 12 = aka off
       break;
   }
   // TODO: Also set blowerFanVoltage is actually reported from the output of the FSC to a different pin
 }
 
-int changeWaterValve(){
+void changeWaterValve(int newValveMode){
+  waterValveMode = newValveMode;
   // the water valve is closed when grounded
   if (waterValveMode == FALSE){
     // water valve closed
@@ -571,5 +582,4 @@ int changeWaterValve(){
     // water valve open
     digitalWrite(WATER_VALVE_PIN, LOW);
   }
-  return waterValveMode;
 }
