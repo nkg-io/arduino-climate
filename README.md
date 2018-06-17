@@ -12,7 +12,8 @@ Originally designed for use in the Australian Ford Falcon (AU), as I had perform
 - Receive voltage level from fan speed controller and send via CAN bus
 
 ## Required software and hardware
-- Arduino Nano
-- MCP2515 board, easily available on eBay; used to connect to vehicle CAN bus
+- Arduino Mega (a uno can work too - just in this situation needed the extra outputs)
+- MCP2515 board, used to connect to vehicle CAN bus
+- L298N board, used to control the blend door motor
 - TIP12x, I used a TIP122 as it was easier to get a hold of locally to me. A TIP120 would have easily sufficed as this is only switching 12 volts for vacuum solenoids.
 - MCP_CAN_LIB to interface with the MCP2515, available [here](https://github.com/coryjfowler/MCP_CAN_lib)

@@ -1,5 +1,6 @@
 // AU<->FG Falcon climate control software
-// Version 0.7 - 26/5/18
+// Version 0.8 - 17/6/18
+// Functions not working: Automatic Climate and Blend door control using L298N, and ensure correct calculations for external temperatures
 
 #include <mcp_can.h>
 #include <SPI.h>
@@ -45,27 +46,24 @@ MCP_CAN CAN0(53);                               // Set CS to pin 53 (pin 10 for 
 #define YELLOW_PIN 43
 // send air to screen and floor????? - there may be a secondary use to this but cannot find singular use of Brown / Yellow. both used together.
 
-//#define FSC_PIN 2
-// pin that connects to the fan speed controller transistor
-// needs to be PWM
-
 #define L298N_FSC_DIR1 42
-// 
+// Used to set direction of the output from the L298N.
 
 #define L298N_FSC_DIR2 41
-// 
+// Used to set direction of the output from the L298N.
 
 #define L298N_FSC_SPEED 2
-// PWM control of the l298n
+// PWM control to the l298n for fan speed
 
 #define L298N_BLEND_DIR1 40
-// 
+// Used to set direction of the output from the L298N.
 
 #define L298N_BLEND_DIR2 39
-// 
+// Used to set direction of the output from the L298N.
 
 #define L298N_BLEND_SPEED 3
-// PWM control of the l298n
+// PWM control of the l298n for how quickly the blend door motor will move.
+// Likely will be a constant speed anyway as no real need to move faster and slower.
 
 #define SERIESRESISTOR 10000
 // the resistors in series with the thermistors to determine the actual resistance of the thermistors
@@ -524,7 +522,7 @@ void changeAirInlet(int newInletMode){
 
 void changeBlowerMotor(){
   // Input is global variable selectedBlower; this code only used for the semi auto mode.
-  // will need to check the logic of the HIGH and LOW order to ensure the thing is going the correct direction.
+  // TODO: will need to check the logic of the HIGH and LOW order to ensure the thing is going the correct direction.
   if (selectedBlower !=10){analogWrite(L298N_FSC_DIR1,LOW); analogWrite(L298N_BLEND_DIR2,HIGH);}
   else {analogWrite(L298N_FSC_DIR1,HIGH); analogWrite(L298N_BLEND_DIR2,LOW);}
 
