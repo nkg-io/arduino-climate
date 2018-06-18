@@ -1,6 +1,7 @@
 // AU<->FG Falcon climate control software
-// Version 0.8 - 17/6/18
-// Functions not working: Automatic Climate and Blend door control using L298N, and ensure correct calculations for external temperatures
+// Version 0.8.5 - 19/6/18
+// Created by @natgeor
+// Functions not working: Automatic Climate and ensuring correct calculations for external temperatures
 
 #include <mcp_can.h>
 #include <SPI.h>
