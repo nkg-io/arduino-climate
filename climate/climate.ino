@@ -25,7 +25,7 @@ MCP_CAN CAN0(53);                               // Set CS to pin 53 (pin 10 for 
 // also known as green pin
 // Fresh is to atmosphere (low)
 // Recirc is to vacuum (high)
-// TODO: Note that when on 'high temp' in fresh; this goes to vacuum and actually recircs
+// when on 'high temp' in fresh; this goes high and recircs; aka when high temp always recird
 
 #define WATER_VALVE_PIN 47
 // turquoise
@@ -101,7 +101,10 @@ const unsigned int txInt = 50; // transmission interval for data kept in the sta
 unsigned long prevSave = 0; // time since last save
 const unsigned int saveInt = 5000; // every 5 seconds go to save
 
-int motorLoc = 0; // the location of the blend door motor - might want to save in EEPROM when shutting down?
+int motorLoc = 0; // the location of the blend door motor
+bool motorMoving = FALSE; // is the motor moving, used for logic in blend door
+unsigned int prevTemp = 44; // previous temperature; used for logic relating to manual blend door
+bool motorDirection = 0; // 0 is cooling (lowering values), 1 is heating (raising values). used for determining if we overshot
 
 // CAN RX Variables
 long unsigned int rxId;
@@ -303,7 +306,7 @@ void loop() {
       case 0x313:
         // 0x313 = 787 dec
         // ICC Internal temperature input; recieved every 250ms
-        cabinTemp = rxBuf[0]; // therefore to calculate a temperature times by two and add 100; therefore 22c = 144, 21.5 = 143; to get real temp cabinActualTemp = (cabinTemp - 100) / 2;
+        cabinTemp = rxBuf[0] - 100; // to calculate this form by two and add 100; eg 22c = 144, 21.5 = 143; to in reverse real temp cabinActualTemp = (cabinTemp) / 2; can sends like selectedTemp but +100
         break;
     };
   }
@@ -322,21 +325,58 @@ void loop() {
   ambientTemp = tempCalc(ambientRaw, 1);
 
   // Manual/"semi auto" climate control blend door control
-  // For manual climate control, would need to associate 'temperatures' with positions of the blend door. there are 26 'temp positions', from cold at 35 to hot at 61.
   // inlet controls & blower are is done in the CAN input part
   if (climateMode == 2){
     // move door dependant on selectedTemp. 
-    // TODO: if airOutletMode == 4 (demist); set fan to 3 (recommended in the manual)
+    // TODO: if airOutletMode == 4 (demist); set fan to 3 (recommended in the manual); if (selectedTemp == 61){changeAirInlet(FALSE);}
     // need to implement acEngaged logic; if (acOn == FALSE) {acEngaged = FALSE;} else if (airOutletMode == 4){acEngaged = TRUE; // demist uses a/c} etc
 
-    // move the blend door to the appropriate position for the selected temperature
-    // TODO: maybe not run this every time lol as it _will_ block
-    moveBlendDoor(map(selectedTemp, 35, 61, 0, 255));
-    // Logic for water valve: if cabin temperature is colder than selected temp, open the valve
-    if ((cabinTemp-100) < selectedTemp){changeWaterValve(TRUE);}
-    else {changeWaterValve(FALSE);}
-    // Maximum cold always has the water valve closed and inlet to recirc
-    if (selectedTemp == 35){changeWaterValve(FALSE); changeAirInlet(FALSE);}
+    // If the temperature has changed:
+    if (prevTemp != selectedTemp){
+      // calculate direction for blend door motor to move in
+      if(cabinTemp < selectedTemp){
+        // if cabin temp is less than selected temp we need to heat
+        motorDirection = 1; // heating
+        analogWrite(L298N_BLEND_DIR1,LOW); analogWrite(L298N_BLEND_DIR2,HIGH);
+        // also change water valve to assist - TODO: might need some sort of variance so the solenoid is not going crazy on and off when at temperature
+        changeWaterValve(TRUE);
+      }
+      else {
+        // we are cooling
+        motorDirection = 0; // cooling
+        analogWrite(L298N_BLEND_DIR1,HIGH); analogWrite(L298N_BLEND_DIR2,LOW);
+        // also change water valve off
+        changeWaterValve(FALSE);
+      }
+
+      // Override: Maximum cold always has the water valve closed and inlet to recirc
+      if (selectedTemp == 35){changeWaterValve(FALSE); changeAirInlet(FALSE);}
+
+      // start motor moving
+      moveBlendDoor();
+      // set the previous temp to selected temp as the temp has not changed since last check
+      prevTemp = selectedTemp;
+    }
+
+    if (motorMoving == TRUE){
+      // check location - TODO: maybe only do this every 50ms?
+      motorLoc = analogRead(MOTORLOC_PIN);
+      // If the motor is the required location +- 2 stop motor
+      //TODO: this may not need to be so large variance, as the mapping between the two may be quite small.
+      if ( (motorLoc > (map(selectedTemp, 35, 61, closed_location, open_location)-2)) && (motorLoc < (map(selectedTemp, 35, 61, closed_location, open_location)+2)) ){
+        stopBlendDoor();
+      }
+      // how does an overshoot occur? current logic will send the motor in a single direction which is logged.
+      // if we overshoot when heating we will have opened too far so the value will be larger
+      if ((motorDirection == 1) && motorLoc > (map(selectedTemp, 35, 61, closed_location, open_location)+2)){
+        // cause the motor to run in the opposite direction
+      }
+      else if ((motorDirection == 0) && motorLoc < (map(selectedTemp, 35, 61, closed_location, open_location)-2)){
+
+      }
+    }
+    
+    // might want logic for water valve when at location and temp to close again to avoid constant heat pump?
 
   }
 
@@ -344,7 +384,7 @@ void loop() {
   if (climateMode == 1){
     // TODO: implement a PID algorithm to move motor dependant on everything.
     // use map() function to map the fan speed   
-    //cabinActualTemp = (cabinTemp - 100) / 2;
+    //cabinActualTemp = cabinTemp / 2;
     if (selectedTemp == 35){changeAirInlet(FALSE);} // maximum cold = recirc
     // Will change blend door (use moveBlendDoor), air inlet (use changeAirInlet), blower speed (as infinitely variable implement locally), air outlet (use changeAirOutlet), acOn status
   }
@@ -360,7 +400,7 @@ void loop() {
   }
 
   // Send CAN data
-  if(millis() - prevTX >= txInt){                    // currently sending at 50ms interval defined by txInt
+  if(millis() - prevTX >= txInt){// currently sending at 50ms interval defined by txInt
     prevTX = millis();
     byte data[8];
     // these bytes may all be backwards; as I am taking the byte 7 as the largest e.g. 10000000
@@ -459,31 +499,18 @@ float tempCalc(int x_in, int mode) {
   return temp; 
 } 
 
-// TODO: make this function
-void moveBlendDoor(int pos){
-  // take input and move blend door to the position requested.
-  // only actually move the door if the position has changed, don't need to burn out the motor moving it like crazy
-  // cold is when the heater door fully closed
-  // get location of the blend door first
-  motorLoc = analogRead(MOTORLOC_PIN);
+void moveBlendDoor(){
+  // This function will start the motor moving. 
+  motorMoving = TRUE;
+  analogWrite(L298N_BLEND_SPEED, 30);
+}
 
-  // pos is from 0 (closed) to 255 (open) - mapped based on selected temp currently
-  if (pos > map(motorLoc, CHECK, CHECK, 0, 255)){
-    // only need to set the direction once
-    analogWrite(L298N_BLEND_DIR1,LOW); analogWrite(L298N_BLEND_DIR2,HIGH);
-    while(pos > map(motorLoc, CHECK, CHECK, 0, 255)){
-      // move motor to left?
-      analogWrite(L298N_BLEND_SPEED, 50);
-    }
-  }
-  else if (pos < map(motorLoc, CHECK, CHECK, 0, 255)){
-    analogWrite(L298N_BLEND_DIR1,HIGH); analogWrite(L298N_BLEND_DIR2,LOW);
-    while(pos > map(motorLoc, CHECK, CHECK, 0, 255)){
-      // move motor to right?
-      analogWrite(L298N_BLEND_SPEED, 50);
-    }
-  }
-  else {break;}
+void stopBlendDoor(){
+  // This function literally does as said; stops the motor from moving.
+  motorMoving = FALSE;
+  analogWrite(L298N_BLEND_SPEED, 0);
+  analogWrite(L298N_BLEND_DIR1,LOW); 
+  analogWrite(L298N_BLEND_DIR2,LOW);
 }
 
 void changeAirOutlet(int newOutletMode){
