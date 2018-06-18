@@ -101,6 +101,8 @@ const unsigned int txInt = 50; // transmission interval for data kept in the sta
 unsigned long prevSave = 0; // time since last save
 const unsigned int saveInt = 5000; // every 5 seconds go to save
 
+int motorLoc = 0; // the location of the blend door motor - might want to save in EEPROM when shutting down?
+
 // CAN RX Variables
 long unsigned int rxId;
 unsigned char len;
@@ -142,6 +144,8 @@ void setup() {
   pinMode(L298N_BLEND_DIR1, OUTPUT);
   pinMode(L298N_BLEND_DIR2, OUTPUT);
   pinMode(L298N_BLEND_SPEED, OUTPUT);
+  
+  // Don't need to set pinMode on an analog pin if using analogRead()
 
   // only want to receive messages from ICC climate buttons (0x307) and PCM (0x)
   CAN0.init_Mask(0,0,0x07FF0000);                // Init first mask... - compares the entire ID.
@@ -326,6 +330,7 @@ void loop() {
     // need to implement acEngaged logic; if (acOn == FALSE) {acEngaged = FALSE;} else if (airOutletMode == 4){acEngaged = TRUE; // demist uses a/c} etc
 
     // move the blend door to the appropriate position for the selected temperature
+    // TODO: maybe not run this every time lol as it _will_ block
     moveBlendDoor(map(selectedTemp, 35, 61, 0, 255));
     // Logic for water valve: if cabin temperature is colder than selected temp, open the valve
     if ((cabinTemp-100) < selectedTemp){changeWaterValve(TRUE);}
@@ -458,8 +463,27 @@ float tempCalc(int x_in, int mode) {
 void moveBlendDoor(int pos){
   // take input and move blend door to the position requested.
   // only actually move the door if the position has changed, don't need to burn out the motor moving it like crazy
-
   // cold is when the heater door fully closed
+  // get location of the blend door first
+  motorLoc = analogRead(MOTORLOC_PIN);
+
+  // pos is from 0 (closed) to 255 (open) - mapped based on selected temp currently
+  if (pos > map(motorLoc, CHECK, CHECK, 0, 255)){
+    // only need to set the direction once
+    analogWrite(L298N_BLEND_DIR1,LOW); analogWrite(L298N_BLEND_DIR2,HIGH);
+    while(pos > map(motorLoc, CHECK, CHECK, 0, 255)){
+      // move motor to left?
+      analogWrite(L298N_BLEND_SPEED, 50);
+    }
+  }
+  else if (pos < map(motorLoc, CHECK, CHECK, 0, 255)){
+    analogWrite(L298N_BLEND_DIR1,HIGH); analogWrite(L298N_BLEND_DIR2,LOW);
+    while(pos > map(motorLoc, CHECK, CHECK, 0, 255)){
+      // move motor to right?
+      analogWrite(L298N_BLEND_SPEED, 50);
+    }
+  }
+  else {break;}
 }
 
 void changeAirOutlet(int newOutletMode){
@@ -523,8 +547,8 @@ void changeAirInlet(int newInletMode){
 void changeBlowerMotor(){
   // Input is global variable selectedBlower; this code only used for the semi auto mode.
   // TODO: will need to check the logic of the HIGH and LOW order to ensure the thing is going the correct direction.
-  if (selectedBlower !=10){analogWrite(L298N_FSC_DIR1,LOW); analogWrite(L298N_BLEND_DIR2,HIGH);}
-  else {analogWrite(L298N_FSC_DIR1,HIGH); analogWrite(L298N_BLEND_DIR2,LOW);}
+  if (selectedBlower !=10){analogWrite(L298N_FSC_DIR1,LOW); analogWrite(L298N_FSC_DIR2,HIGH);}
+  else {analogWrite(L298N_FSC_DIR1,HIGH); analogWrite(L298N_FSC_DIR2,LOW);}
 
   switch(selectedBlower){
     case 0:
