@@ -361,18 +361,17 @@ void loop() {
     if (motorMoving == TRUE){
       // check location - TODO: maybe only do this every 50ms?
       motorLoc = analogRead(MOTORLOC_PIN);
-      // If the motor is the required location +- 2 stop motor
-      //TODO: this may not need to be so large variance, as the mapping between the two may be quite small.
-      if ( (motorLoc > (map(selectedTemp, 35, 61, closed_location, open_location)-2)) && (motorLoc < (map(selectedTemp, 35, 61, closed_location, open_location)+2)) ){
+      // If the motor is over the required location, stop the motor
+      if (((motorLoc >= map(selectedTemp, 35, 61, closed_location, open_location)) && (motorDirection == 1)) || ((motorLoc <= map(selectedTemp, 35, 61, closed_location, open_location)) && (motorDirection == 0))){
         stopBlendDoor();
       }
-      // how does an overshoot occur? current logic will send the motor in a single direction which is logged.
-      // if we overshoot when heating we will have opened too far so the value will be larger
+
+      // An overshoot may occur, if we overshoot when heating we will have opened too far so the value will be larger than 2
       if ((motorDirection == 1) && motorLoc > (map(selectedTemp, 35, 61, closed_location, open_location)+2)){
-        // cause the motor to run in the opposite direction
+        // cause the motor to run in the opposite direction for a slight time. do not want to bounce however; only need to be within the range
       }
       else if ((motorDirection == 0) && motorLoc < (map(selectedTemp, 35, 61, closed_location, open_location)-2)){
-
+        // code here too thanks
       }
     }
     
