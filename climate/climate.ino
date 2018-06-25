@@ -1,7 +1,7 @@
 // AU<->FG Falcon climate control software
 // Version 0.8.5 - 19/6/18
 // Created by @natgeor
-// Functions not working: Automatic Climate and ensuring correct calculations for external temperatures
+// Functions not working: Automatic Climate, A/C control, ensuring correct calculations for external temperatures
 
 #include <mcp_can.h>
 #include <SPI.h>
@@ -22,44 +22,45 @@ MCP_CAN CAN0(53);                               // Set CS to pin 53 (pin 10 for 
 
 // When the solenoids are off; the specific thing is set to Atmosphere and does not get vacuum.
 
-#define INLET_PIN 48
+#define INLET_PIN 44
 // also known as green pin
 // Fresh is to atmosphere (low)
 // Recirc is to vacuum (high)
 // when on 'high temp' in fresh; this goes high and recircs; aka when high temp always recird
 
-#define WATER_VALVE_PIN 47
+#define WATER_VALVE_PIN 43
 // turquoise
 // Water valve open when to atmosphere; which is when low (waterValveMode = TRUE)
 
-#define BLUE_PIN 46
+#define BLUE_PIN 42
 // send air to face
 // To vacuum (high) when set to face
 
-#define RED_PIN 45
+#define RED_PIN 41
 // to air to cold only face, bi level
 // To vacuum only when face and floor mode is on and 'full cold' is set
 
-#define BROWN_PIN 44
+#define BROWN_PIN 40
 // aka TAN
 // send air to floor
 
-#define YELLOW_PIN 43
+#define YELLOW_PIN 39
 // send air to screen and floor????? - there may be a secondary use to this but cannot find singular use of Brown / Yellow. both used together.
 
-#define L298N_FSC_DIR1 42
+#define L298N_FSC_DIR1 48
 // Used to set direction of the output from the L298N.
 
-#define L298N_FSC_DIR2 41
+#define L298N_FSC_DIR2 47
 // Used to set direction of the output from the L298N.
 
 #define L298N_FSC_SPEED 2
+// the fan speed controller is on the left side of the chip
 // PWM control to the l298n for fan speed
 
-#define L298N_BLEND_DIR1 40
+#define L298N_BLEND_DIR1 46
 // Used to set direction of the output from the L298N.
 
-#define L298N_BLEND_DIR2 39
+#define L298N_BLEND_DIR2 45
 // Used to set direction of the output from the L298N.
 
 #define L298N_BLEND_SPEED 3
@@ -106,6 +107,10 @@ int motorLoc = 0; // the location of the blend door motor
 bool motorMoving = FALSE; // is the motor moving, used for logic in blend door
 unsigned int prevTemp = 44; // previous temperature; used for logic relating to manual blend door
 bool motorDirection = 0; // 0 is cooling (lowering values), 1 is heating (raising values). used for determining if we overshot
+
+
+// TODO: this is all for TEST only. do NOT use
+int closed_location = 1; int open_location = 1;
 
 // CAN RX Variables
 long unsigned int rxId;
