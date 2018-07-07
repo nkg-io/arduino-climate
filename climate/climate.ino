@@ -1,7 +1,9 @@
 // AU<->FG Falcon climate control software
-// Version 0.8.5 - 19/6/18
+// Version 0.9 - 5/7/18
 // Created by @natgeor
-// Functions not working: Automatic Climate, A/C control, ensuring correct calculations for external temperatures
+// Functions not working: Automatic Climate, ensuring correct calculations for external temperatures
+// will also need to: when a button is pressed disable traction control; receive an A/C reduction request from PCM and disable acEngaged
+// theoretically the next thing to do would be to refactor the change blower motor function to take a number as an input?
 
 #include <mcp_can.h>
 #include <SPI.h>
@@ -77,7 +79,7 @@ MCP_CAN CAN0(53);                               // Set CS to pin 53 (pin 10 for 
 // Define variables
 float evapTemp; // A/C evaporator core temperature - may need this finer accuracy as is used below a temp to turn on/off.
 int evapRaw; // raw voltage reading between 0 and 1023
-int ambientTemp; // Outside temp - only need low resolution, ICC only displays int regardless
+int ambientTemp; // Outside temp
 int ambientRaw; // raw voltage reading
 int cabinTemp; // temperature from ICC CAN.
 bool waterValveMode = TRUE; // whether water valve is closed (FALSE) or open (TRUE) 
@@ -88,12 +90,8 @@ unsigned int climateMode = 0; // Auto (1) / Semi (2) / Off (0) - keep state as t
 unsigned int selectedBlower = 0; // reports back selected blower fan speed in semi auto/manual mode; 10 fan speeds - 0-10, 0 being off (1 = Low, 10 = High)
 bool airInletMode = TRUE; // Air inlet mode - fresh (1 - true) / recirc(0 - false) 
 unsigned int airOutletMode = 0; // Air outlet mode - face/floor/screen, demist
-bool acOn = TRUE; // this is used only in the program, used to determine if A/C on or not. used to calculate the state of the below 3 A/C booleans.
+bool acOff = FALSE; // this is used only in the program, used to determine if A/C off is pressed
 bool acEngaged = FALSE; // this is because we want to send a message depending on whether AC clutch request is to be sent or not
-//bool acDisplayIcon; // Whether or not to display A/C icon??
-//bool acOnDisplayIcon; // not sure about the A/C icon deal here.. but by default A/C is enabled
-//bool acOffDisplayIcon; // by default A/C off so keep off
-//bool personDisplayIcon = TRUE; // something transmitted apparently. may actually be used to hide person in auto mode etc?
 float blowerFanVoltage = 0.0; // Blower fan motor operating speed voltage
 
 // Other variables
@@ -102,6 +100,9 @@ const unsigned int txInt = 50; // transmission interval for data kept in the sta
 
 unsigned long prevSave = 0; // time since last save
 const unsigned int saveInt = 5000; // every 5 seconds go to save
+
+unsigned long prevLoc = 0; // time elapsed since last motor location check
+const unsigned int locInt = 50; // interval for checking where the blend door motor is; currently 50ms
 
 int motorLoc = 0; // the location of the blend door motor
 bool motorMoving = FALSE; // is the motor moving, used for logic in blend door
@@ -132,6 +133,7 @@ unsigned char rxBuf[8];
 #define ICC_OUTLET_BUTTON "\x00\x80\x00\x80\x00\x00\x00\x00"
 #define ICC_TEMP_DEC "\x00\x00\x40\x80\x00\x00\x00\x00"
 #define ICC_TEMP_INC "\x00\x00\x80\x80\x00\x00\x00\x00"
+#define ICC_DSC_BUTTON "\x00\x00\x00\x90\x00\x00\x00\x00"
 
 void setup() {
   // Initialize MCP2515 running at 8MHz with a baudrate of 500kb/s
@@ -190,9 +192,9 @@ void loop() {
         if (memcmp(rxBuf, ICC_FRONT_DEMIST, len) == 0){
           // Demist
           climateMode = 2; // semi automatic
-          // A/C is enabled when demist on
-          acOn = TRUE;
           changeAirOutlet(4); // screen only (demist)
+          selectedBlower = 3; // set the fan to three
+          changeBlowerMotor();
           break;
         }
           
@@ -224,7 +226,7 @@ void loop() {
           else {
             climateMode = 2; // semi automatic, as automatic automatically selects A/C on and off
             if (airInletMode == FALSE){changeAirInlet(TRUE);} // can not have recirc and A/C off apparently
-            acOn = !acOn; //invert boolean
+            acOff = !acOff; //invert boolean
           }
           break;
         }
@@ -267,14 +269,13 @@ void loop() {
           changeAirOutlet(0); // default is face 
           changeAirInlet(TRUE); // set inlet variable to fresh
           selectedBlower = 0;
-          acOn = TRUE; // allow a/c again? TODO: we don't actaully want A/C clutch running though
+          acOff = FALSE; // if a/c off was on, reset that off
           acEngaged = FALSE; // this will ensure the A/C clutch is turned off
           break; // no need to process any more ifs 
         }
 
         if (memcmp(rxBuf, ICC_AUTO_BUTTON, len) == 0){
           climateMode = 1;
-          acOn = TRUE; // allow A/C
           selectedTemp = 44; // 22c is default
           changeAirInlet(TRUE); // auto runs fresh unless max cooling
           break; // no need to process any more ifs 
@@ -312,7 +313,8 @@ void loop() {
       case 0x313:
         // 0x313 = 787 dec
         // ICC Internal temperature input; recieved every 250ms
-        cabinTemp = rxBuf[0] - 100; // to calculate this form by two and add 100; eg 22c = 144, 21.5 = 143; to in reverse real temp cabinActualTemp = (cabinTemp) / 2; can sends like selectedTemp but +100
+        cabinTemp = rxBuf[0] - 100; // eg 22c = 144, 21.5 = 143; to real temp: cabinActualTemp = (cabinTemp) / 2
+        // dependant on how the array works, this may actually be rxBuf[7]
         break;
     };
   }
@@ -320,37 +322,35 @@ void loop() {
   // Retrieve information from sensors
   evapRaw = analogRead(EVAP_PIN);
   // now need to convert the input value into a resistance
-  evapRaw = 1023 / evapRaw - 1;
+  evapRaw = (1023 / evapRaw) - 1;
   evapRaw = SERIESRESISTOR / evapRaw;
   evapTemp = tempCalc(evapRaw, 0);
 
   ambientRaw = analogRead(AMBIENT_PIN);
   // now need to convert to resistance to pass
-  ambientRaw = 1023 / ambientRaw - 1;
+  ambientRaw = (1023 / ambientRaw) - 1;
   ambientRaw = SERIESRESISTOR / ambientRaw;
   ambientTemp = tempCalc(ambientRaw, 1);
 
-  // Manual/"semi auto" climate control blend door control
+  // Manual/"semi auto" climate control blend door control & a/c
   // inlet controls & blower are is done in the CAN input part
   if (climateMode == 2){
-    // move door dependant on selectedTemp. 
-    // TODO: if airOutletMode == 4 (demist); set fan to 3 (recommended in the manual); if (selectedTemp == 61){changeAirInlet(FALSE);}
-    // need to implement acEngaged logic; if (acOn == FALSE) {acEngaged = FALSE;} else if (airOutletMode == 4){acEngaged = TRUE; // demist uses a/c} etc
+    // check if the z/c is usable
+    // if (acDisengage == TRUE){acEngaged = FALSE}
+    // else {} <- use the line below
+    acOff ? acEngaged = FALSE : acEngaged = TRUE; // later this may need to take in account an A/C disengage request.
 
-    // If the temperature has changed:
+    // If the selected temperature has changed:
     if (prevTemp != selectedTemp){
       // calculate direction for blend door motor to move in
       if(cabinTemp < selectedTemp){
         // if cabin temp is less than selected temp we need to heat
         motorDirection = 1; // heating
-        analogWrite(L298N_BLEND_DIR1,LOW); analogWrite(L298N_BLEND_DIR2,HIGH);
-        // also change water valve to assist - TODO: might need some sort of variance so the solenoid is not going crazy on and off when at temperature
+        // also change water valve to assist
         changeWaterValve(TRUE);
       }
       else {
-        // we are cooling
         motorDirection = 0; // cooling
-        analogWrite(L298N_BLEND_DIR1,HIGH); analogWrite(L298N_BLEND_DIR2,LOW);
         // also change water valve off
         changeWaterValve(FALSE);
       }
@@ -364,10 +364,14 @@ void loop() {
       prevTemp = selectedTemp;
     }
 
-    if (motorMoving == TRUE){
-      // check location - TODO: maybe only do this every 50ms?
+    // Logic for if the motor is moving to stop the motor
+    if ((motorMoving == TRUE) && (millis() - prevLoc >= locInt)){
+      // check location - checking only every 50ms
+      prevLoc = millis();
+
       motorLoc = analogRead(MOTORLOC_PIN);
-      // If the motor is over the required location, stop the motor
+      // If the motor is over the required location, stop the motor & ensure the water valve is closed
+      // TODO: the required locations may been a buffer so the motor stops
       if (((motorLoc >= map(selectedTemp, 35, 61, closed_location, open_location)) && (motorDirection == 1)) || ((motorLoc <= map(selectedTemp, 35, 61, closed_location, open_location)) && (motorDirection == 0))){
         stopBlendDoor();
       }
@@ -375,14 +379,24 @@ void loop() {
       // An overshoot may occur, if we overshoot when heating we will have opened too far so the value will be larger than 2
       if ((motorDirection == 1) && motorLoc > (map(selectedTemp, 35, 61, closed_location, open_location)+2)){
         // cause the motor to run in the opposite direction for a slight time. do not want to bounce however; only need to be within the range
+        motorDirection = 0;
       }
       else if ((motorDirection == 0) && motorLoc < (map(selectedTemp, 35, 61, closed_location, open_location)-2)){
         // code here too thanks
+        motorDirection = 1;
       }
     }
     
-    // might want logic for water valve when at location and temp to close again to avoid constant heat pump?
-
+    // Logic for now reached location goes here.
+    // We will now be waiting for the temp to rise or cool
+    if ((cabinTemp > (selectedTemp - 2)) && (cabinTemp < (selectedTemp + 2))){
+      // If within 1c can close the water valve
+      changeWaterValve(FALSE);
+    }
+    else {
+      // We are still waiting for the car to heat or cool.
+      if (selectedTemp == 61){changeAirInlet(FALSE);} // the maximum heat is always recirculated air
+    }
   }
 
   // Calculations and changes for automatic climate go here.
@@ -391,7 +405,8 @@ void loop() {
     // use map() function to map the fan speed   
     //cabinActualTemp = cabinTemp / 2;
     if (selectedTemp == 35){changeAirInlet(FALSE);} // maximum cold = recirc
-    // Will change blend door (use moveBlendDoor), air inlet (use changeAirInlet), blower speed (as infinitely variable implement locally), air outlet (use changeAirOutlet), acOn status
+    acOff = FALSE; // this may not be necessary as the CAN transmission may not send this
+    // Will change blend door (use moveBlendDoor), air inlet (use changeAirInlet), blower speed (as infinitely variable implement locally), air outlet (use changeAirOutlet), ac status
   }
 
   // Save data to EEPROM when necessary - every 5 seconds
@@ -411,55 +426,15 @@ void loop() {
     // these bytes may all be backwards; as I am taking the byte 7 as the largest e.g. 10000000
 
     // each byte stores an 8 bit number from 0-255
-    // byte 6 always contains 129
-    data[6] = 129;
-    // byte 5 always contains zero, as it is the passenger temp
-    data[5] = 0;
-    data[4] = selectedTemp;
 
-    //TODO: these need to be correctly sent; it is possible these contain some modification to represent a different number e.g. (temp-100)/2 or something
-    // byte 3 is the ambient temp;
-    data[3] = ambientTemp;
-
-    // byte 2 is AC evaporator temp - warning this is a Float; an example here is 171 = 35.5c which is going to be wrong
-    data[2] = evapTemp;
-
-    data[1] = blowerFanVoltage;
-
-    //data[0] is fan speed; from 0 to 10 in decimal where 0 is off; 10 is max?; exception is when in full auto mode with fan speed set? add 144 to fan speed
-    if (climateMode==1){data[0] = selectedBlower + 144;}
-    else{data[0] = selectedBlower;}
-    
-    /* AC related booleans to transmit:
-    and other odd booleans: personDisplayIcon
-    // may need to only actually turn on the icons when e.g a/c turned off acOffDisplayIcon would be one, but if system off (climateMode == 0), then don't need to
-    // display acOnDisplayIcon or acDisplayIcon (as they are just assumed etc)
-    if (acOn == FALSE){
-      acDisplayIcon = FALSE;
-      acOnDisplayIcon = FALSE;
-      acOffDisplayIcon = TRUE;
-    }
-    else{
-      acDisplayIcon = TRUE;
-      acOnDisplayIcon = TRUE;
-      acOffDisplayIcon = FALSE;
-    }
-    */
-
-    // Transmit data[7]
-    // bitWrite(x, n, b) for data[7]
-    // n: which bit of the number to write, starting at 0 for the least-significant (rightmost) bit
-    // b: the value to write to the bit (0 or 1)
-    // (a == 1) ? true: false
-
-    bitWrite(data[7], 7, !acEngaged); // ac clutch engaged or not
-    bitWrite(data[7], 6, !airInletMode); // recirc (inlet == false)
-    bitWrite(data[7], 5, airInletMode); // fresh (inlet == true)
+    // bit 7; no need to reset each time as each bit is manually calculated every execution
+    bitWrite(data[7], 7, acOff); // a/c off should be just the indicator, not an actual request to engage
+    bitWrite(data[7], 6, !airInletMode);
+    bitWrite(data[7], 5, airInletMode);
 
     // Face
     if (airOutletMode == 0 || airOutletMode == 1){bitWrite(data[7], 4, 1);}
     else{bitWrite(data[7], 4, 0);}
-    //(airOutletMode == 0 || airOutletMode == 1) ? bitWrite(data[7], 4, 1) : bitWrite(data[7], 4, 0);
 
     // Feet / Floor
     if (airOutletMode == 1 || airOutletMode == 2 || airOutletMode == 3){bitWrite(data[7], 3, 1);}
@@ -473,12 +448,52 @@ void loop() {
 
     bitWrite(data[7], 0, 1); // unsure of this bit; was originally thinking this relates to auto fan but it does not
 
+    // byte 6 always contains 129 - technically may contain the mode of the climate system
+    data[6] = 129;
+    /* comment line above if using this logic here
+    data[6] = 0;
+    if (climateMode == 0){bitWrite(data[6], 0, 1);}
+    if (climateMode == 1){bitWrite(data[6], 2, 1);}
+    if (climateMode == 2){bitWrite(data[6], 1, 1);}
+    
+    */
+
+    // byte 5 always contains zero, as it is the passenger temp (single zone)
+    data[5] = 0;
+
+    // selected temperature seems to not use the +100
+    data[4] = selectedTemp;
+
+    // TODO: these 3 below need to be correctly sent; it is possible these contain some modification to represent a different number e.g. 2temp+100 or something. we will
+    // use this for the calculations since other temperatures are received this way
+    // byte 3 is the ambient temp;
+    data[3] = 2 * ambientTemp + 100;
+
+    // byte 2 is AC evaporator temp - will need to log this one
+    data[2] = 2 * (int)evapTemp + 100;
+
+    // actually see the car and figure out how this is sent... may need to be divided etc.
+    data[1] = (int)blowerFanVoltage;
+
+    //data[0] is fan speed; from 0 to 10 in decimal where 0 is off; 10 is max?; exception is when in full auto mode with fan speed set? add 144 to fan speed
+    if (climateMode==1){data[0] = selectedBlower + 144;}
+    else{data[0] = selectedBlower;}
+
+    // for A/C - these may be the requests for A/C
+    bitWrite(data[0], 7, acEngaged); // supposed to be A/C on or off
+    bitWrite(data[0], 4, 0); // supposed to be A/C max
+
     if (climateMode == 0){
       // if climate mode is set to off
       data[0] = 0;
       data[1] = 0;
-      data[2] = 171;
+      data[2] = 171; // this is the a/c evap temp
       data[4] = 0;
+    }
+
+    else if (climateMode == 1){
+      data[7] = 2;
+      data[6] = 132; // technically should be 132 to indicate 
     }
 
     byte sndStat = CAN0.sendMsgBuf(canID, 8, data); //send the packet over CAN using the HIM's CANID of 0x353
@@ -506,7 +521,14 @@ float tempCalc(int x_in, int mode) {
 
 void moveBlendDoor(){
   // This function will start the motor moving. 
+  if (motorDirection == 1){ // heating
+    analogWrite(L298N_BLEND_DIR1,LOW); analogWrite(L298N_BLEND_DIR2,HIGH);
+  }
+  else if (motorDirection == 0){ // cooling
+    analogWrite(L298N_BLEND_DIR1,HIGH); analogWrite(L298N_BLEND_DIR2,LOW);
+  }
   motorMoving = TRUE;
+
   analogWrite(L298N_BLEND_SPEED, 30);
 }
 
@@ -579,6 +601,7 @@ void changeAirInlet(int newInletMode){
 void changeBlowerMotor(){
   // Input is global variable selectedBlower; this code only used for the semi auto mode.
   // TODO: will need to check the logic of the HIGH and LOW order to ensure the thing is going the correct direction.
+  // Also set blowerFanVoltage - this is reported from the output of the FSC to a different pin
   if (selectedBlower !=10){analogWrite(L298N_FSC_DIR1,LOW); analogWrite(L298N_FSC_DIR2,HIGH);}
   else {analogWrite(L298N_FSC_DIR1,HIGH); analogWrite(L298N_FSC_DIR2,LOW);}
 
@@ -622,7 +645,6 @@ void changeBlowerMotor(){
       // sets the default to 12 = aka off
       break;
   }
-  // TODO: Also set blowerFanVoltage is actually reported from the output of the FSC to a different pin
 }
 
 void changeWaterValve(int newValveMode){
