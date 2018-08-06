@@ -111,7 +111,7 @@ bool motorDirection = 0; // 0 is cooling (lowering values), 1 is heating (raisin
 
 
 // TODO: this is all for TEST only. do NOT use
-int closed_location = 1; int open_location = 1;
+int min_location = 230; int max_location = 830;
 
 // CAN RX Variables
 long unsigned int rxId;
@@ -372,11 +372,11 @@ void loop() {
       motorLoc = analogRead(MOTORLOC_PIN);
       // If the motor is over the required location, stop the motor & ensure the water valve is closed
       // TODO: the required locations may been a buffer so the motor stops
-      if (((motorLoc >= map(selectedTemp, 35, 61, closed_location, open_location)) && (motorDirection == 1)) || ((motorLoc <= map(selectedTemp, 35, 61, closed_location, open_location)) && (motorDirection == 0))){
+      if (((motorLoc >= map(selectedTemp, 35, 61, min_location, max_location)) && (motorDirection == 1)) || ((motorLoc <= map(selectedTemp, 35, 61, min_location, max_location)) && (motorDirection == 0))){
         stopBlendDoor();
       }
 
-      // An overshoot may occur, if we overshoot when heating we will have opened too far so the value will be larger than 2
+      /* An overshoot may occur, if we overshoot when heating we will have opened too far so the value will be larger than 2
       if ((motorDirection == 1) && motorLoc > (map(selectedTemp, 35, 61, closed_location, open_location)+2)){
         // cause the motor to run in the opposite direction for a slight time. do not want to bounce however; only need to be within the range
         motorDirection = 0;
@@ -385,6 +385,7 @@ void loop() {
         // code here too thanks
         motorDirection = 1;
       }
+      */
     }
     
     // Logic for now reached location goes here.
@@ -522,10 +523,10 @@ float tempCalc(int x_in, int mode) {
 void moveBlendDoor(){
   // This function will start the motor moving. 
   if (motorDirection == 1){ // heating
-    analogWrite(L298N_BLEND_DIR1,LOW); analogWrite(L298N_BLEND_DIR2,HIGH);
+    digitalWrite(L298N_BLEND_DIR1,LOW); digitalWrite(L298N_BLEND_DIR2,HIGH);
   }
   else if (motorDirection == 0){ // cooling
-    analogWrite(L298N_BLEND_DIR1,HIGH); analogWrite(L298N_BLEND_DIR2,LOW);
+    digitalWrite(L298N_BLEND_DIR1,HIGH); digitalWrite(L298N_BLEND_DIR2,LOW);
   }
   motorMoving = TRUE;
 
@@ -536,8 +537,8 @@ void stopBlendDoor(){
   // This function literally does as said; stops the motor from moving.
   motorMoving = FALSE;
   analogWrite(L298N_BLEND_SPEED, 0);
-  analogWrite(L298N_BLEND_DIR1,LOW); 
-  analogWrite(L298N_BLEND_DIR2,LOW);
+  digitalWrite(L298N_BLEND_DIR1,LOW); 
+  digitalWrite(L298N_BLEND_DIR2,LOW);
 }
 
 void changeAirOutlet(int newOutletMode){
@@ -602,8 +603,8 @@ void changeBlowerMotor(){
   // Input is global variable selectedBlower; this code only used for the semi auto mode.
   // TODO: will need to check the logic of the HIGH and LOW order to ensure the thing is going the correct direction.
   // Also set blowerFanVoltage - this is reported from the output of the FSC to a different pin
-  if (selectedBlower !=10){analogWrite(L298N_FSC_DIR1,LOW); analogWrite(L298N_FSC_DIR2,HIGH);}
-  else {analogWrite(L298N_FSC_DIR1,HIGH); analogWrite(L298N_FSC_DIR2,LOW);}
+  if (selectedBlower !=10){digitalWrite(L298N_FSC_DIR1,LOW); digitalWrite(L298N_FSC_DIR2,HIGH);}
+  else {digitalWrite(L298N_FSC_DIR1,HIGH); digitalWrite(L298N_FSC_DIR2,LOW);}
 
   switch(selectedBlower){
     case 0:
