@@ -110,7 +110,7 @@ unsigned int prevTemp = 44; // previous temperature; used for logic relating to 
 bool motorDirection = 0; // 0 is cooling (lowering values), 1 is heating (raising values). used for determining if we overshot
 
 
-// TODO: this is all for TEST only. do NOT use
+// TODO: the definitions of these variables may be backwards; would need to check actual heater box for which way means which
 int min_location = 230; int max_location = 830;
 
 // CAN RX Variables
